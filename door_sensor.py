@@ -1,7 +1,8 @@
 import json
+from device1 import Device
 
 
-class Door_sensor:
+class Door_sensor(Device):
     def __init__(self, device_id):
         self.id = device_id
         self.type = "door_sensor"
@@ -33,6 +34,7 @@ class Door_sensor:
         
 
 door_sensor = Door_sensor("front_door_#51572AB")
+door_sensor.discover_peers( "105","door_sensor1")
 while True:
     action = input("Type scan for RFID scan, force for forced entry, close for closing door: ") 
     if action == "scan":
@@ -47,4 +49,5 @@ while True:
     
     if event:
         print(event)
+        door_sensor.send_tcp_message(event)
 

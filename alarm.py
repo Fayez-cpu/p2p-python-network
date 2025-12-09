@@ -14,11 +14,22 @@ class Alarm(Device):
             message = json.loads(message)
         if message["msg_type"] == "door_open" and message["access_type"] == "unauthorized":
             self.state = "sound alarm"
+            print("authorized entry")
             return  "trigger alarm"
         elif message["msg_type"] == "door_open" and message["access_type"] == "authorized":
             self.state = "idle"
+            print("authorized entry")
             return "authorized entry"
+        
         
 alarm = Alarm(5001, 5000, 1024,"front_01")
 alarm.check_entry({'msg_type': 'door_open', 'device_id': 'front_door_#51572AB', 'door_state': 'open', 'access_type': 'unauthorized', 'rfid_tag': None})
 alarm.start_discovery_listener()
+while True:
+    try:
+        message = alarm.recv_tcp_message()
+        alarm.check_entry(message)
+        
+    except:
+        print("Error in receiving command")
+    

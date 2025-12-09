@@ -7,7 +7,7 @@ class Device:
         self.discovery_port = discovery_port
         self.tcp_port = tcp_port
         self.buffer_size = buffer_size
-
+        self.tcp_conn = ""
     def start_discovery_listener(self):
         # start udp socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -24,7 +24,7 @@ class Device:
                 continue
 
             print(f"[UDP] Received from {addr}: {msg}")
-            self.send_tcp_connection(addr[0], 5000)
+            
 
             if msg.get("msg_type") == "DISCOVER":
                 # Prepare response with info needed to connect over TCP
@@ -35,11 +35,13 @@ class Device:
                     "ip": addr[0],     # or your own IP if needed
                     "tcp_port": self.tcp_port
                 }
+                
                 sock.sendto(json.dumps(response).encode(), addr)
-                print(f"[UDP] Sent DISCOVER_RESPONSE to {addr}")    
+                print(f"[UDP] Sent DISCOVER_RESPONSE to {addr}")
+                self.send_tcp_connection(addr[0], 5000)    
 
 
-    def discover_peers(my_id, my_type):
+    def discover_peers(self, my_id, my_type):
         # send a udp broadcast to all devices on the network
         DISCOVERY_TIMEOUT = 5
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -53,15 +55,15 @@ class Device:
         }
 
         # Broadcast on the local network
-        sock.sendto(json.dumps(discovery_msg).encode(), ("<broadcast>", DISCOVERY_PORT))
+        sock.sendto(json.dumps(discovery_msg).encode(), ("<broadcast>", 5001 ))
         print("[UDP] Discovery broadcast sent")
-
+        self.get_tcp_connection()
         discovered = []
 
 
         while True:
             try:
-                data, addr = sock.recvfrom(BUFFER_SIZE)
+                data, addr = sock.recvfrom(1024)
             except socket.timeout:
                 print("[UDP] Discovery timeout reached")
                 break
@@ -85,22 +87,33 @@ class Device:
         sock.close()
         return discovered  
     
+    def get_tcp_connection(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(('0.0.0.0',5000))
+        server.listen()
+        self.tcp_conn, address = server.accept()
+        print(f"Connected by {address}")
+        #receive_thread = threading.Thread(target=self.recv_tcp_message, args=(client,))
+        #receive_thread.start()
+
+        #send_thread = threading.Thread(target=self.send_tcp_message, args=(client,))
+        #send_thread.start()
     def send_tcp_connection(self, ip, port):
-        conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        conn.connect((ip, port))
+        self.tcp_conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.tcp_conn.connect((ip, port))
         print("Connected")
-        receive_thread = threading.Thread(target=self.recv_tcp_message, args=(conn,))
-        receive_thread.start()
+        #receive_thread = threading.Thread(target=self.recv_tcp_message, args=(conn,))
+        #receive_thread.start()
 
-        send_thread = threading.Thread(target=self.send_tcp_message, args=(conn,))
-        send_thread.start()
+        #send_thread = threading.Thread(target=self.send_tcp_message, args=(conn,))
+        #send_thread.start()
 
-    def send_tcp_message(self, conn):
+    def send_tcp_message(self, message):
         while True:
-            message = input("")
-            conn.send(message.encode())
+            message = json.dumps(message)
+            self.tcp_conn.send(message.encode())
 
-    def recv_tcp_message(self, conn):
+    def recv_tcp_message(self):
         while True:
-            message = conn.recv(1024).decode()
-            print(message)
+            message = json.loads(self.tcp_conn.recv(1024).decode())
+            return message
