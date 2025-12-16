@@ -7,13 +7,17 @@ class Device:
         self.discovery_port = discovery_port
         self.tcp_port = tcp_port
         self.buffer_size = buffer_size
-        self.tcp_conn = ""
-    def start_discovery_listener(self):
+
+    def run_tcp_server(self):
+        listening_tcp_server = threading.Thread(target=self.start_tcp_server)
+        listening_tcp_server.start()
+    def start_discovery_listener_server(self):
         # start udp socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("", self.discovery_port))
         print(f"[UDP] Discovery listener on port {self.discovery_port}")
+        print("text".encode())
         while True:
             data, addr = sock.recvfrom(self.buffer_size)
             #receives a connetiom
@@ -31,14 +35,13 @@ class Device:
                 response = {
                     "msg_type": "DISCOVER_RESPONSE",
                     "id": self.device_id,
-                    "device_type": self.device_type,
-                    "ip": addr[0],     # or your own IP if needed
+                    "device_type": self.device_type, 
                     "tcp_port": self.tcp_port
                 }
                 
                 sock.sendto(json.dumps(response).encode(), addr)
                 print(f"[UDP] Sent DISCOVER_RESPONSE to {addr}")
-                self.send_tcp_connection(addr[0], 5000)    
+
 
 
     def discover_peers(self, my_id, my_type):
@@ -57,10 +60,10 @@ class Device:
         # Broadcast on the local network
         sock.sendto(json.dumps(discovery_msg).encode(), ("<broadcast>", 5001 ))
         print("[UDP] Discovery broadcast sent")
-        self.get_tcp_connection()
+        
         discovered = []
 
-
+        
         while True:
             try:
                 data, addr = sock.recvfrom(1024)
@@ -81,18 +84,38 @@ class Device:
                     "ip": addr[0],
                     "tcp_port": msg.get("tcp_port")
                 })
+            self.send_tcp_connection(addr[0], 5000)
 
 
 
         sock.close()
         return discovered  
     
-    def get_tcp_connection(self):
+    def start_tcp_server(self):
+        # server is the tcp socket created
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.bind(('0.0.0.0',5000))
         server.listen()
-        self.tcp_conn, address = server.accept()
-        print(f"Connected by {address}")
+        while True:
+            connection, address = server.accept()
+            print(f"Connected by {address}")
+            #print(connection)
+            connection_thread = threading.Thread(target=self.handle_connection_server, args=(connection,))
+            connection_thread.start()
+
+
+    def handle_connection_server(self, connection):
+        key = self.recv_tcp_message(connection)
+        if key != self.secret_key:
+            print("Incorrect secret key! Terminating Connection")
+            self.connection.close()
+        while True:
+            try:
+                message = self.recv_tcp_message(connection)
+                self.check_entry(message)
+            except Exception as e:
+                print(f"{e} Error, closing connection {connection}")
+                break
         #receive_thread = threading.Thread(target=self.recv_tcp_message, args=(client,))
         #receive_thread.start()
 
@@ -101,6 +124,7 @@ class Device:
     def send_tcp_connection(self, ip, port):
         self.tcp_conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_conn.connect((ip, port))
+        self.send_tcp_message(self.secret_key)
         print("Connected")
         #receive_thread = threading.Thread(target=self.recv_tcp_message, args=(conn,))
         #receive_thread.start()
@@ -109,11 +133,9 @@ class Device:
         #send_thread.start()
 
     def send_tcp_message(self, message):
-        while True:
-            message = json.dumps(message)
-            self.tcp_conn.send(message.encode())
+        message = json.dumps(message)
+        self.tcp_conn.send(message.encode())
 
-    def recv_tcp_message(self):
-        while True:
-            message = json.loads(self.tcp_conn.recv(1024).decode())
+    def recv_tcp_message(self, connection):
+            message = json.loads(connection.recv(1024).decode())
             return message
