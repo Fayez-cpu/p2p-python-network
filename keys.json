@@ -1,0 +1,7 @@
+{
+    "users": [
+        {"rfid_hash": "106e8a688eca6c6ae2b2bf5eeeb6a5f966386c65a4e23c5be456389caa6d7be2", "salt": "Shkyeyr!wtl76gG"},
+        {"rfid_hash": "dekjleyk", "salt": "stoeky"},
+        {"rfid_hash": "84f2a2daca4f15075ffd6926b32345721a7018482395251c6d9c847912e662d8", "salt": "Shkyeyr!wtl76gG"}
+    ]
+}

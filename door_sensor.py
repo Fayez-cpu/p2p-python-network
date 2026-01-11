@@ -1,7 +1,10 @@
 import json
 from device1 import Device
 import datetime
+import hmac_signature
+import os
 
+hmac_key = b"2'\xae\x14\xbe\xb0\x0e\x88\xb4\xf6m\x10iL2\x0f\x85C\xfe\xa9\x16\xd5(H\x8aA*\xcf\r$\x1e\xf1"
 
 class Door_sensor(Device):
     def __init__(self, device_id):
@@ -10,23 +13,22 @@ class Door_sensor(Device):
         self.peers = []
         self.authorized_tags = []
         self.state = "closed"
-        self.secret_key = "A5cf1hglf3"
+        self.secret_key = "A5cf1hglf3!xgf"
     def check_door_open(self, rfid_tag=None):
         if self.state == "open":
             return None
         self.state = "open"
-        if rfid_tag in self.authorized_tags:
-            access = "authorized"
-        else:
-            access = "unauthorized"
+        
         message = {
             "msg_type": "door_open",
             "device_id": self.id,
             "door_state": "open",
-            "access_type": access,
             "rfid_tag": rfid_tag,
+            "nonce": os.urandom(6).hex(),
             "timestamp": int(datetime.datetime.now().timestamp())
+            
         }
+
         return message
 
     def check_door_closed(self):
@@ -54,7 +56,10 @@ while True:
         print("Unknown commad")
     
     if event:
-        print(event)
+        print(f"event is {event}")
         door_sensor.check_door_closed()
-        door_sensor.send_tcp_message(event)
+        secured_event = door_sensor.encrypt_hash_message(door_sensor.timestamp_jsonby(event))
+        print(secured_event)
+        door_sensor.send_tcp_message(secured_event)
+        print(door_sensor.recv_tcp_message(door_sensor.tcp_conn))
     

@@ -1,15 +1,8 @@
-import secrets
+
 import hmac
 import hashlib
-import json
 
-
-secret_key = secrets.token_bytes(32)
-#rint(secret_key)
-#print(secret_key.hex())
-print(hashlib.sha256("Shkyeyr!wtl76gG".encode() + "Clfcb7a1!wt".encode()).hexdigest())
-
-def calc_hash(key, payload ):
+def sign_message(key, payload ):
     signature = hmac.new(key, payload, hashlib.sha256).hexdigest()
     return signature
 
