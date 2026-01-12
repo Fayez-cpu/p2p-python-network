@@ -16,8 +16,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from crypto.dh import get_dh_keys, get_kdf_key
-from crypto.aes import encrypt_message
-from crypto.hmac import sign_message
+from crypto.aes import encrypt_message, decrypt_message
+from crypto.hmac import sign_message, verify_hash, check_timestamp
 
 hmac_key = b"2'\xae\x14\xbe\xb0\x0e\x88\xb4\xf6m\x10iL2\x0f\x85C\xfe\xa9\x16\xd5(H\x8aA*\xcf\r$\x1e\xf1"
 
@@ -27,6 +27,8 @@ class Device:
         self.discovery_port = discovery_port
         self.tcp_port = tcp_port
         self.buffer_size = buffer_size
+        self.peers = []
+        self.nonce_list = []
 
 
     def encrypt_hash_message(self, plaintext): 
@@ -52,7 +54,7 @@ class Device:
         if abs(now - plaintext_data["timestamp"]) > 4:
             print("timestamp error")
             return False
-        if plaintext_data["nonce"] in self.nonces:
+        if plaintext_data["nonce"] in self.nonce_list:
             print("nonce error")
             return False
         else:
@@ -81,14 +83,13 @@ class Device:
                 continue
 
             print(f"[UDP] Received from {addr}: {msg}")
-            
+            self.peers.append({"id": msg["id"], "connection": None, "aes_key": None})
 
-            if msg.get("msg_type") == "DISCOVER":
+            if msg["msg_type"] == "DISCOVER":
                 # Prepare response with info needed to connect over TCP
                 response = {
                     "msg_type": "DISCOVER_RESPONSE",
                     "id": self.device_id,
-                    "device_type": self.device_type, 
                     "tcp_port": self.tcp_port
                 }
                 
@@ -97,7 +98,7 @@ class Device:
 
 
 
-    def discover_peers(self, my_id, my_type):
+    def discover_peers(self):
         # send a udp broadcast to all devices on the network
         # this is used by door sensor
         DISCOVERY_TIMEOUT = 5
@@ -107,15 +108,14 @@ class Device:
 
         discovery_msg = {
             "msg_type": "DISCOVER",
-            "id": my_id,
-            "device_type": my_type
+            "id": self.id
         }
 
         # Broadcast on the local network
         sock.sendto(json.dumps(discovery_msg).encode(), ("<broadcast>", 5001 ))
         print("[UDP] Discovery broadcast sent")
         
-        discovered = []
+
 
         
         while True:
@@ -132,18 +132,20 @@ class Device:
 
             if msg.get("msg_type") == "DISCOVER_RESPONSE":
                 print(f"[UDP] Got response from {addr}: {msg}")
-                discovered.append({
-                    "id": msg.get("id"),
-                    "device_type": msg.get("device_type"),
+                tcp_port = msg["tcp_port"]
+                self.peers.append({
+                    "id": msg["id"],
                     "ip": addr[0],
-                    "tcp_port": msg.get("tcp_port")
+                    "tcp_port": tcp_port
                 })
-            self.send_tcp_connection(addr[0], 5005)
+            self.send_tcp_connection(addr[0], tcp_port)
 
 
 
         sock.close()
-        return discovered  
+
+    def get_connection():
+        pass
     
     def start_tcp_server(self):
         # server is the tcp socket created
@@ -153,6 +155,9 @@ class Device:
         while True:
             connection, address = server.accept()
             print(f"Connected by {address}")
+            for peer in self.peers:
+                if not peer["connection"]:
+                    peer["connection"] = connection
             #print(connection)
             connection_thread = threading.Thread(target=self.handle_connection_server, args=(connection,))
             connection_thread.start()
@@ -160,70 +165,78 @@ class Device:
 
     def handle_connection_server(self, connection):
         self.tcp_conn = connection
-        key = self.recv_tcp_message(connection)
-        if key != self.secret_key:
-            print("Incorrect secret key! Terminating Connection")
-            self.connection.close()
+        
+        #self.connection.close()
         private_key, public_key = get_dh_keys()
         peer_public_key = self.recv_tcp_message(connection)
         public_bytes = public_key.public_bytes( encoding=serialization.Encoding.Raw,
                                        format=serialization.PublicFormat.Raw)
-        self.send_tcp_message(public_bytes.hex())
+        self.send_tcp_message(public_bytes.hex(), connection)
         peer_public_bytes = bytes.fromhex(peer_public_key)
         peer_public_key = x25519.X25519PublicKey.from_public_bytes(peer_public_bytes)
         shared_secret = private_key.exchange(peer_public_key)
         print(shared_secret)
-        self.aes_key = get_kdf_key(shared_secret)
+        aes_key = get_kdf_key(shared_secret)
         while True:
             try:
-                message = self.recv_tcp_message(connection)
-                print("message is")
-                print(message)
-                decrypted = self.verify_decrypt_message(message)
-                if not decrypted:
-                    self.send_tcp_message("Invalid hash/timepstampy")
-                    return "Invalid hash"
-                entry = self.check_entry(decrypted)
-                self.send_tcp_message(entry)
+                received = self.recv_message(connection, aes_key)
+                print(f"received message is {received}")
+                print(received[0])
+                if not received[0]:
+                    print("Error ")
+                    return received[1]
+                else:
+                    message = received[1]
+                    print("message is")
+                    print(message)
+                    entry = self.check_entry(message)
+                    self.send_message(entry, aes_key, connection)
             except Exception as e:
-                print(f"{e} Error, closing connection {connection}")
-                break
+                print(f"{e} Error decrypting message")
+                self.send_message("Error decrypting", aes_key, connection)
+                connection.close()
 
     def send_tcp_connection(self, ip, port):
         #door sensor tcp connection
         self.tcp_conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_conn.connect((ip, port))
         connection = self.tcp_conn
-        self.send_tcp_message(self.secret_key)
+
         print("Connected")
         private_key, public_key = get_dh_keys()
         public_bytes = public_key.public_bytes( encoding=serialization.Encoding.Raw,
                                        format=serialization.PublicFormat.Raw)
-        self.send_tcp_message(public_bytes.hex())
+        self.send_tcp_message(public_bytes.hex(), connection)
         peer_public_key = self.recv_tcp_message(connection)
         peer_public_bytes = bytes.fromhex(peer_public_key)
         peer_public_key = x25519.X25519PublicKey.from_public_bytes(peer_public_bytes)
         shared_secret = private_key.exchange(peer_public_key)
         self.aes_key = get_kdf_key(shared_secret)
 
-    def timestamp_jsonby(self,message):
-        message["timestamp"] = int(datetime.datetime.now().timestamp())
-        message = json.dumps(message)
-        return message.encode()
 
 
-    def send_message(self,message):
+
+    def send_message(self,message, aes_key, connection):
         plaintext = json.dumps(message).encode()
-        encrypted = encrypt_message(self.aes_key, plaintext)
+        encrypted = encrypt_message(aes_key, plaintext)
         print(f"encrypted message is {encrypted}")
         encrypted["hmac"] = sign_message(hmac_key, encrypted["ciphertext"])
-        self.send_tcp_message(encrypted)
+        self.send_tcp_message(encrypted, connection)
 
-    def send_tcp_message(self, message):
+    def send_tcp_message(self, message, connection):
         message = json.dumps(message)
-        self.tcp_conn.send(message.encode())
+        connection.send(message.encode())
 
-
+    def recv_message(self, connection, aes_key):
+        encrypted = self.recv_tcp_message(connection)
+        if not verify_hash(hmac_key, encrypted):
+            connection.close()
+            return [False, "Invalid signature"]
+        plaintext = decrypt_message(aes_key, encrypted)
+        print(f"plaintext is {plaintext}")
+        if not check_timestamp(plaintext, self.nonce_list):
+            return [False, "Invalid/old timestamp"]
+        return [True, plaintext]
 
     def recv_tcp_message(self, connection):
             message = json.loads(connection.recv(1024).decode())
